@@ -1,23 +1,84 @@
-//! By convention, root.zig is the root source file when making a library.
 const std = @import("std");
 
-pub fn bufferedPrint() !void {
-    // Stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    const stdout = &stdout_writer.interface;
+pub const AgentPayload = struct {
+    model: []u8,
+    created_at: []u8,
+    response: []u8,
+    thinking: ?[]u8 = null,
+    done: bool,
+    done_reason: ?[]u8 = null,
+    context: ?[]i64 = null,
+    total_duration: ?i64 = null,
+    load_duration: ?i64 = null,
+    prompt_eval_count: ?i64 = null,
+    prompt_eval_duration: ?i64 = null,
+    eval_count: ?i64 = null,
+    eval_duration: ?i64 = null,
+};
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
+pub const AgentResponse = struct {
+    req: std.http.Client.Request,
+    reader: *std.io.Reader,
+    allocator: std.mem.Allocator,
 
-    try stdout.flush(); // Don't forget to flush!
-}
+    pub fn next(self: *AgentResponse) !?AgentPayload {
+        const size = try self.reader.takeDelimiter('\n') orelse return null;
 
-pub fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
+        if (std.mem.eql(u8, size, "0")) {
+            std.debug.print("empty line\n", .{});
+            return null;
+        }
 
-test "basic add functionality" {
-    try std.testing.expect(add(3, 7) == 10);
-}
+        const payload = try self.reader.takeDelimiter('\n') orelse return null;
+
+        const jsonParsed = std.json.parseFromSlice(AgentPayload, self.allocator, payload, .{}) catch {
+            return null;
+        };
+
+        _ = try self.reader.takeDelimiter('\n') orelse return null;
+
+        return jsonParsed.value;
+    }
+
+    pub fn deinit(self: *AgentResponse) void {
+        self.req.deinit();
+    }
+};
+
+pub const Agent = struct {
+    allocator: std.mem.Allocator,
+    client: std.http.Client,
+
+    pub fn init(allocator: std.mem.Allocator) Agent {
+        return Agent{
+            .allocator = allocator,
+            .client = std.http.Client{ .allocator = allocator },
+        };
+    }
+
+    pub fn prompt(self: *Agent, message: []u8) !AgentResponse {
+        const url = try std.Uri.parse("http://localhost:11434/api/generate");
+        var req = try self.client.request(.POST, url, .{});
+
+        var allocating: std.io.Writer.Allocating = .init(self.allocator);
+        defer allocating.deinit();
+
+        try std.json.Stringify.value(.{ .model = "qwen3:latest", .prompt = message }, .{}, &allocating.writer);
+        const buffer = try allocating.toOwnedSlice();
+        defer self.allocator.free(buffer);
+
+        try req.sendBodyComplete(buffer);
+
+        _ = try req.receiveHead(allocating.writer.buffer);
+
+        return AgentResponse{
+            .allocator = self.allocator,
+            .req = req,
+            .reader = req.reader.bodyReader(allocating.writer.buffer, .none, null),
+        };
+    }
+
+    pub fn deinit(self: *Agent) void {
+        defer self.client.deinit();
+    }
+};
