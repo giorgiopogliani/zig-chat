@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub const AgentMessage = struct {
+    id: ?[]u8 = null,
     role: []u8,
     content: []u8,
     thinking: ?[]u8 = null,
@@ -64,7 +65,7 @@ pub const Agent = struct {
         };
     }
 
-    pub fn prompt(self: *Agent, message: []u8) !AgentResponse {
+    pub fn prompt(self: *Agent, messages: []AgentMessage) !AgentResponse {
         const url = try std.Uri.parse("http://localhost:11434/api/chat");
         var req = try self.client.request(.POST, url, .{});
 
@@ -73,12 +74,7 @@ pub const Agent = struct {
 
         try std.json.Stringify.value(.{
             .model = "qwen3:latest", // model
-            .messages = .{
-                .{
-                    .role = "user",
-                    .content = message,
-                },
-            },
+            .messages = messages,
             .stream = true,
         }, .{}, &allocating.writer);
         const buffer = try allocating.toOwnedSlice();
