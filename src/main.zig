@@ -9,6 +9,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     while (true) {
+        std.debug.print("\x1b[90muser: ", .{});
         const prompt = try utils.ask();
 
         var agent = zigday.Agent.init(allocator);
@@ -16,11 +17,13 @@ pub fn main() !void {
         defer response.deinit();
 
         while (try response.next()) |res| {
-            if (res.thinking) |t| {
+            if (res.message.thinking) |t| {
                 std.debug.print("\x1b[90m{s}\x1b[0m", .{t});
             }
 
-            std.debug.print("{s}", .{res.response});
+            if (res.message.content.len > 0 and !res.done) {
+                std.debug.print("{s}", .{res.message.content});
+            }
         }
         std.debug.print("\n", .{});
     }

@@ -1,9 +1,16 @@
 const std = @import("std");
 
+pub const AgentMessage = struct {
+    role: []u8,
+    content: []u8,
+    thinking: ?[]u8 = null,
+};
+
 pub const AgentPayload = struct {
     model: []u8,
     created_at: []u8,
-    response: []u8,
+    message: AgentMessage,
+    response: ?[]u8 = null,
     thinking: ?[]u8 = null,
     done: bool,
     done_reason: ?[]u8 = null,
@@ -32,6 +39,7 @@ pub const AgentResponse = struct {
         const payload = try self.reader.takeDelimiter('\n') orelse return null;
 
         const jsonParsed = std.json.parseFromSlice(AgentPayload, self.allocator, payload, .{}) catch {
+            // std.debug.print("error parsing json: {any}\n", .{err});
             return null;
         };
 
@@ -57,13 +65,22 @@ pub const Agent = struct {
     }
 
     pub fn prompt(self: *Agent, message: []u8) !AgentResponse {
-        const url = try std.Uri.parse("http://localhost:11434/api/generate");
+        const url = try std.Uri.parse("http://localhost:11434/api/chat");
         var req = try self.client.request(.POST, url, .{});
 
         var allocating: std.io.Writer.Allocating = .init(self.allocator);
         defer allocating.deinit();
 
-        try std.json.Stringify.value(.{ .model = "qwen3:latest", .prompt = message }, .{}, &allocating.writer);
+        try std.json.Stringify.value(.{
+            .model = "qwen3:latest", // model
+            .messages = .{
+                .{
+                    .role = "user",
+                    .content = message,
+                },
+            },
+            .stream = true,
+        }, .{}, &allocating.writer);
         const buffer = try allocating.toOwnedSlice();
         defer self.allocator.free(buffer);
 
